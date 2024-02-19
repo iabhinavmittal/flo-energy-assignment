@@ -199,5 +199,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("insertStatement = %+v", insertStatement[0])
+	fmt.Printf("insertStatement = %+v", insertStatement)
 }

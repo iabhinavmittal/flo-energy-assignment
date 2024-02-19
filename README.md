@@ -1,8 +1,13 @@
-# Questions:
+# Prerequisite
 
-1. Is the interval value in minutes?
-2. Is it mandatorty to have full set of consumption values for each day? For example, is it possible to have only 10 "30-min" values for a day?
-3. What is the scale that we are talking about? 10k records? 1M records? Getting a ball park number is helpful in avoiding over engineering, which I prefer.
+1. go 1.22
+
+# How to run?
+
+1. Go to root folder
+2. run `go get .` to install the dependencies
+3. run `go run main.go date_helper.go`. It will print the batched insert statments.
+4. run `go test` to run the unit tests.
 
 # Assumptions:
 
@@ -10,6 +15,7 @@
 2. In case there is a wrong/mis-matched line item, I will be ignoring and storing it for review separately.
 3. The solution will only return statements for insert and not actually insert anything into a DB
 4. The dates are given in UTC time
+5. Interval can be 5 min, 15 mins and 30 mins only (based on manual)
 
 # Psuedo Code:
 
@@ -31,13 +37,13 @@
 
 - ~1 million records
   - can we store so much data in memory?
-  - looping through them can increase latency => benchmark for performance
-  - batch insert or individual insert?
+  - looping through them can increase latency => keeping it O(n) to reduce latency
+  - batch insert or individual insert? => batching it with a variable INSERT_BATCH_SIZE
 
 # Other Potential Issues:
 
 - handle db insert failures (not part of the scope)
-- what to do with malformed requests? => store them in-memory separately for review
+- what to do with malformed requests? => ignore and store them in-memory separately for review
 
 # Test Cases (WIP):
 
