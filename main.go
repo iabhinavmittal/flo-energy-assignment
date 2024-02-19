@@ -14,7 +14,7 @@ import (
 
 type meterReadingRecord struct {
 	nmi         string
-	date        string
+	date        string // can also be time.Time depending on SQL client
 	consumption float64
 }
 
@@ -39,13 +39,14 @@ func readCSVFile() ([][]string, error) {
 	return data, nil
 }
 
+// Sample: 200,NEM1201009,E1E2,1,E1,N1,01009,kWh,30,20050610
 func validate200Record(record []string) (bool, error) {
 	if len(record) != 10 {
 		return false, errors.New("not enough elements in the 200 record")
 	}
 
-	// validate nmi format
-	// validate interval format, should be a valid number
+	// TODO: validate nmi format
+	// TODO: validate interval format, should be a valid number
 
 	return true, nil
 }
@@ -57,6 +58,7 @@ func parse200Record(record []string) (string, int, error) {
 		return "", 0, err
 	}
 
+	// convert interval from string to int
 	value, err := strconv.Atoi(record[8])
 	if err != nil {
 		return "", 0, err
@@ -71,12 +73,12 @@ func validate300Record(record []string, interval int) (bool, error) {
 	// 300,20030501,50.1, . . . ,21.5,V,,,20030101153445,20030102023012
 
 	numOfRequiredElements := ((24 * 60) / interval) + 7
-	fmt.Printf("length = %d, and required = %d", len(record), numOfRequiredElements)
-
 	if len(record) != numOfRequiredElements {
-		fmt.Printf("record = %+v", record)
 		return false, errors.New("not enough elements in the 300 record")
 	}
+
+	// TODO: validate if all the consumption values are valid numbers
+	// TODO: validate if the date is valid format
 
 	return true, nil
 }
@@ -152,7 +154,7 @@ func createMeterReadingList(data [][]string) ([]meterReadingRecord, error) {
 }
 
 func createBatchInsertStatements(records []meterReadingRecord) ([]string, error) {
-	const INSERT_BATCH_SIZE = 50
+	const INSERT_BATCH_SIZE = 50 // can optimize after benchmarking
 	var batchInsertStatements []string
 	var insertStatement string
 
