@@ -12,75 +12,67 @@ import (
 	"github.com/google/uuid"
 )
 
-type meterReadingRecord struct {
-	nmi         string
-	date        string // can also be time.Time depending on SQL client
-	consumption float64
+const (
+	csvFileName     = "data.csv"
+	insertBatchSize = 50
+)
+
+type MeterReading struct {
+	NMI         string
+	Date        time.Time
+	Consumption float64
 }
 
 func readCSVFile() ([][]string, error) {
-	// open file
-	f, err := os.Open("data.csv")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// remember to close the file at the end of the program
-	defer f.Close()
-
-	// read csv values using csv.Reader
-	csvReader := csv.NewReader(f)
-	csvReader.FieldsPerRecord = -1 // since all lines in csv do not have equal elements
-	data, err := csvReader.ReadAll()
+	file, err := os.Open(csvFileName)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 
-	return data, nil
+	csvReader := csv.NewReader(file)
+	csvReader.FieldsPerRecord = -1
+	return csvReader.ReadAll()
 }
 
-// Sample: 200,NEM1201009,E1E2,1,E1,N1,01009,kWh,30,20050610
-func validate200Record(record []string) (bool, error) {
+func validate200Record(record []string) error {
 	if len(record) != 10 {
-		return false, errors.New("not enough elements in the 200 record")
+		return errors.New("invalid number of elements in the 200 record")
 	}
 
 	// TODO: validate nmi format
 	// TODO: validate interval format, should be a valid number
 
-	return true, nil
+	return nil
 }
 
 // Sample: 200,NEM1201009,E1E2,1,E1,N1,01009,kWh,30,20050610
 func parse200Record(record []string) (string, int, error) {
-	ok, err := validate200Record(record)
-	if !ok {
+	if err := validate200Record(record); err != nil {
 		return "", 0, err
 	}
 
-	// convert interval from string to int
-	value, err := strconv.Atoi(record[8])
+	interval, err := strconv.Atoi(record[8])
 	if err != nil {
 		return "", 0, err
 	}
 
-	return record[1], value, nil
+	return record[1], interval, nil
 }
 
-func validate300Record(record []string, interval int) (bool, error) {
-	// Example: RecordIndicator,IntervalDate,IntervalValue1 . . . IntervalValueN,
-	// QualityMethod,ReasonCode,ReasonDescription,UpdateDateTime,MSATSLoadDateTime
-	// 300,20030501,50.1, . . . ,21.5,V,,,20030101153445,20030102023012
-
+// Example: RecordIndicator,IntervalDate,IntervalValue1 . . . IntervalValueN,
+// QualityMethod,ReasonCode,ReasonDescription,UpdateDateTime,MSATSLoadDateTime
+// 300,20030501,50.1, . . . ,21.5,V,,,20030101153445,20030102023012
+func validate300Record(record []string, interval int) error {
 	numOfRequiredElements := ((24 * 60) / interval) + 7
 	if len(record) != numOfRequiredElements {
-		return false, errors.New("not enough elements in the 300 record")
+		return errors.New("invalid number of elements in the 300 record")
 	}
 
 	// TODO: validate if all the consumption values are valid numbers
 	// TODO: validate if the date is valid format
 
-	return true, nil
+	return nil
 }
 
 /*
@@ -90,8 +82,7 @@ func validate300Record(record []string, interval int) (bool, error) {
 		0050310121004,20050310182204
 */
 func parse300Record(record []string, interval int) (time.Time, []string, error) {
-	ok, err := validate300Record(record, interval)
-	if !ok {
+	if err := validate300Record(record, interval); err != nil {
 		return time.Time{}, nil, err
 	}
 
@@ -103,103 +94,81 @@ func parse300Record(record []string, interval int) (time.Time, []string, error) 
 	return date, record[2:(((24 * 60) / interval) + 2)], nil
 }
 
-func createMeterReadingList(data [][]string) ([]meterReadingRecord, error) {
-	var meterReadingList []meterReadingRecord
-	var currNmi string
+func createMeterReadingList(data [][]string) ([]MeterReading, error) {
+	var meterList []MeterReading
+	var currNMI string
 	var currIntervalInMin int // important to let the name tell about min/sec etc
-	var err error
 
 	for _, line := range data {
-		recordType := line[0] // 200 | 300
+		recordType := line[0]
 
 		switch recordType {
 		case "200":
-			currNmi, currIntervalInMin, err = parse200Record(line)
-			if err != nil {
-				return nil, err
-			}
+			currNMI, currIntervalInMin, _ = parse200Record(line)
 
 		case "300":
 			// 300 can only be grouped if 200 was present before that
-			if currNmi != "" {
-				date, consumptionArray, err := parse300Record(line, currIntervalInMin)
-				if err != nil {
-					return nil, err
-				}
-
+			if currNMI != "" {
+				date, consumptionArray, _ := parse300Record(line, currIntervalInMin)
 				for i, c := range consumptionArray {
-					// convert consumption string to float64
-					value, err := strconv.ParseFloat(c, 64)
-					if err != nil {
-						return nil, err
-					}
-
-					meterReadingList = append(meterReadingList, meterReadingRecord{
-						nmi:         currNmi,
-						date:        date.Add(time.Minute * time.Duration(currIntervalInMin*(i+1))).String(),
-						consumption: value,
+					value, _ := strconv.ParseFloat(c, 64)
+					meterList = append(meterList, MeterReading{
+						NMI:         currNMI,
+						Date:        date.Add(time.Minute * time.Duration(currIntervalInMin*(i+1))),
+						Consumption: value,
 					})
 				}
 			}
 
 		default:
 			// reset 200 related values
-			currNmi = ""
+			currNMI = ""
 			currIntervalInMin = 0
-			err = nil
 		}
 	}
 
-	return meterReadingList, nil
+	return meterList, nil
 }
 
-func createBatchInsertStatements(records []meterReadingRecord) ([]string, error) {
-	const INSERT_BATCH_SIZE = 50 // can optimize after benchmarking
+func createBatchInsertStatements(records []MeterReading) ([]string, error) {
 	var batchInsertStatements []string
-	var insertStatement string
 
-	totalRecords := len(records)
-	for i := 0; i < totalRecords; i += INSERT_BATCH_SIZE {
-		end := i + INSERT_BATCH_SIZE
-		if end > totalRecords {
-			end = totalRecords
+	for i := 0; i < len(records); i += insertBatchSize {
+		end := i + insertBatchSize
+		if end > len(records) {
+			end = len(records)
 		}
 
-		insertStatement = "INSERT INTO meter_readings (id, nmi, timestamp, consumption) VALUES "
+		var values string
 		for j, rec := range records[i:end] {
-			id := uuid.New().String()
 			if j > 0 {
-				insertStatement += ","
+				values += ","
 			}
-			insertStatement += fmt.Sprintf("('%s','%s', '%s', %f)", id, rec.nmi, rec.date, rec.consumption)
+			id := uuid.New().String()
+			values += fmt.Sprintf("('%s', '%s', '%s', %f)", id, rec.NMI, rec.Date.String(), rec.Consumption)
 		}
-		insertStatement += ";"
-		batchInsertStatements = append(batchInsertStatements, insertStatement)
+
+		batchInsertStatements = append(batchInsertStatements, fmt.Sprintf("INSERT INTO meter_readings (id, nmi, timestamp, consumption) VALUES %s;", values))
 	}
 
 	return batchInsertStatements, nil
 }
 
 func main() {
-	println("starting program")
-
 	data, err := readCSVFile()
 	if err != nil {
-		fmt.Println("Error1")
-		log.Fatal(err)
+		log.Fatal("Error reading CSV file:", err)
 	}
 
 	meterList, err := createMeterReadingList(data)
 	if err != nil {
-		fmt.Println("Error2")
-		log.Fatal(err)
+		log.Fatal("Error creating meter reading list:", err)
 	}
 
-	insertStatement, err := createBatchInsertStatements(meterList)
+	insertStatements, err := createBatchInsertStatements(meterList)
 	if err != nil {
-		fmt.Println("Error3")
-		log.Fatal(err)
+		log.Fatal("Error creating batch insert statements:", err)
 	}
 
-	fmt.Printf("insertStatement = %+v", insertStatement)
+	fmt.Printf("Insert Statements: %+v\n", insertStatements)
 }
